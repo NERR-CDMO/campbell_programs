@@ -1,0 +1,489 @@
+'Version 7.0
+'Today Nov 24 2014 CR1000 SN 005245 was calibrated on Oct 13, 2014 and installed back at the weather station on 11/24/2014
+'11242014 While being calibrated, it was replaced by CR1000M SN58256 calibtated in 08/21/2013 loaner from CampbSci
+
+'Last modified on July 03 2014 by DDurant
+'Added new ATRH sensor, model HC2S3 SN 61180509 
+'This will replace the 7-wire ATRH SN SN 1294801 or X3410026 that will be put out of service
+
+
+'Version 6.5
+'Last modified on Sep 12 2013 by DDurant
+'Changes to HMP45C SN 1294801 or X3410026 Temperature & Relative Humidity Sensor 
+'This was a 7-wire ATRH but switch to 6 at Campb Sci
+ 
+'VERSION 6.4
+'Last Modified on August 21 2013 by Daisy Durant
+'Added another Rain Gauge
+
+'VERSION 6.3
+'Last Modified: July 31, 2013 by Daisy Durant
+'Added SN and Wiring to each sensor
+'When switching sensors, should ALWAYS comment/uncomment the correct ones
+'Frequency ATRH & Rain every year, All others every 2 years
+
+'VERSION 6.2
+'Last Modified: August 23, 2012 by Daisy Durant and Jeff Adams (Campbell Sci)
+'Added PAR Multiplier of 1.48887512506610
+'Added New AT/RH sensor HC2S3 and comment on wiring
+
+'VERSION 6.1
+'Last Modified: August 04, 2010 by Daisy Durant & Jay Poucher
+'Added PAR Multiplier of 1.582819445
+'Version 6.0 changes, added par multiplier of 1.33518479
+
+
+'Version 5.5 changes, Search for '*** to display these additions
+'Added 24 hour rain total (DailyRain) to SWMP table
+'Applied a new Field Name for Daily Rain as CumPrcp
+'Made GOESDailyRain = DailyRain*1000 output for transmission
+'Added Variable GOESDailyRain & GoesPar to public
+'Set Units for GOESDailyRain and DailyRain to mm
+'Set Units for GOESPar to mmoles/m^2
+'Applied a new Field Name for GOESDaily Rain as G_CumPrcp
+'Reset DailyRain to Zero at midnight
+'Reset GOESDailyRain to Zero at midnight
+'Deleted the  If Par < 0 then Par is 0 line as per DMC 2007
+'Changed "Day" to "Days" in Alias time(3) due to conflict with new CR1000 Firmware
+
+'Version 4.0 changes:
+'Last Modified: June 21st, 2007 by Jay Poucher
+' Add check on wind speed. If NAN, don't include sample is processing for
+' wind vector instruction. Reason: clock set function causing 1 bad wind sample per day
+' which causes one bad wind summery per day. Added variable WindGood as boolean, set true
+' or false after wind speed pulse read in struction. WindGood is used as the process
+' disable variable in the Windvector() function. Search for MOD** to see changes
+
+'Version 3.0 changes:
+' 08/30/2006
+'		Changes made as requested by the Data Management Committee:
+'		- fiftnmin table name changed to SWMP
+'		- Relative humidity min/max, pressure min/max, wind speed min and time fields were dropped
+'		- fieldnames instructions added to SWMP data table to generate consistent with cr10x/CDMO fieldnames
+'		- RHumidity > 100 and PAR < 0 instructions dropped, over or under values will be handled post processing
+'		- subroutine now used to generate min/max values and timestamps for both SWMP and GOESOUT tables
+'		Additonal changes made:
+'		- revision of variable names within program for consistency and improved readability
+'		- Units instructions were added to enable output of parameter units in data table headers
+'				when using TOA5 long header ASCII download format
+' 09/12/2006
+'		- Added colon to max/min timestamps in SWMP table
+'		- Added fieldnames instructions to GOES table (GOES field names same as SWMP with 'G_' prepended)
+'		Changed the HMP45C from a control port to a switched 12V port
+' 12/15/06
+'   - Added code for new 5305 sensor to replace existing 3001
+
+'NERRS Site: Narragansett Bay
+'Location: Prudence, RI
+'Site: Potter's Cove
+'NESDIS Assignments:
+'ID=3B0211F8
+'Transmit Time (mm:ss after the hour) = 1:40
+'ST MsgWindow = 10 sec
+'ST Channel = 145
+'ST BPS = 300
+'Random Channel = 0
+'Random BPS = 0
+'ST Repeat Interval = 1 hour
+'ST Offset = 0 minute, 0 secs
+'Random Repeat Interval = 0 hour
+
+'Sensor list (ports/channels used in prog):
+'HMP45AC (6-wire) Temperature & Relative Humidity 		(se1 se2)
+'Campbell CS105 (PTB101B) Barometric Pressure Sensor  			(se3 on all the time)
+'RM Young 5305-5 Wind Speed & Direction Sensor 			(p1 se4 ex1)
+'(On Standby) Campbell 3001 Wind Speed & Direction Sensor 			(p1 se4 ex1)
+'Texas Electronics TR-525I Rain Gauge 														(p2)
+'LI190SZ Quantum Sensor 														(diff3 == se5 se6)
+
+
+'Holds Sensor Calibration Settings for Easy Access in the Numeric Display
+PreserveVariables
+
+'For Easy Site Identification in the Data Header (Parseable)
+' 	NOTE: this instruction is probably not doing anything as the
+'		variable is stored in the status table but never called
+
+StationName (NARPCMET)
+
+'Time offset for GMT time
+'http://wwp.greenwichmeantime.com/
+Const GMTOFFSET=5
+
+'''Declare Public Variables
+'  Parameters directly sampled by sensors
+Public AirTemp, RHumidity, Pressure, WindSpd, WindDir, Precip, PAR, Batt, WindGood As Boolean'MOD**
+Public pTempC, DailyRain '***
+'Public TotalRad, totRadMultiplier 		'uncomment if total radiation sensor installed (remember to add to tables)
+'Public EppleyPyr, eppMultiplier 'uncomment if eppley pyrometer is installed
+'EnclosureRH 	     'uncomment if relative humidity sensor installed in enclosure
+
+' GOES output variables
+Public goesSetResult,goesFailures,gpsLoc(6),gpsTime(7)
+
+' Variables used in max and min subroutine and to calculate timestamps
+Public atMax,atMaxTime,atMin,atMinTime,wsMax,wsMaxTime
+Public atMaxTimeSwmp As String,atMinTimeSwmp As String,wsMaxTimeSwmp As String
+
+' Variables used for integer translations in the GOES Output
+Public GoesAT,goesATMax,goesATMin,goesRH,goesBP,goesWS,goesWD,goesWSD,goesWSMax,goesPar,goesPrecip,goesBatt,goesDailyRain '***
+
+Public Time(9) 'array to store time
+
+'''Define aliases to give array fields more readable names:
+Alias Time(1) = Year
+Alias Time(2) = Month
+Alias Time(3) = Days
+Alias Time(4) = Hour
+Alias Time(5) = Minute
+Alias Time(6) = Second
+Alias Time(7) = Microsecond
+Alias Time(8) = DayofWeek
+Alias Time(9) = DayofYear
+
+Alias gpsTime(1) = gYear
+Alias gpsTime(2) = gMonth
+Alias gpsTime(3) = gDay
+Alias gpsTime(4) = gHour
+Alias gpsTime(5) = gMinute
+Alias gpsTime(6) = gSecond
+Alias gpsTime(7) = gMicroSecond
+
+Alias gpsLoc(1) = gpsResult 	'GOESgps instruction result code
+Alias gpsLoc(2) = gpsSeconds 	'seconds since Jan 1, 2000
+Alias gpsLoc(3) = gpsLat  		'Fractional degrees; 100 nanodegree resolution
+Alias gpsLoc(4) = gpsLon			'Fractional degrees; 100 nanodegree resolution
+Alias gpsLoc(5) = gpsElev  		'Signed 32-bit number, in centimeters
+Alias gpsLoc(6) = gpsMagElev  'Fractional degrees; 1 millidegree resolution
+
+'''Define units for SWMP data table output
+Units AirTemp = C
+Units atMax = C
+Units atMin = C
+Units RHumidity = %
+Units Pressure = mb
+Units WindSpd = m/s
+Units WindDir = deg
+Units	Precip = mm
+Units PAR = mmoles/m^2
+Units Batt = Volts
+Units DailyRain = mm '***
+
+' Define units of max/min timestamps used in SWMP table
+Units atMaxTimeSwmp = hhmm
+Units atMinTimeSwmp = hhmm
+Units wsMaxTimeSwmp = hhmm
+
+' Define units of max/min timestamps used in GOES table
+Units atMaxTime = hhmm
+Units atMinTime = hhmm
+Units wsMaxTime = hhmm
+
+' Define units for GOES data table output
+Units GoesAT = C
+Units goesATMax = C
+Units goesATMin = C
+Units goesRH = %
+Units goesBP = mb
+Units goesWS = m/s
+Units goesWD = Deg
+Units goesWSD = m/s
+Units goesWSMax = m/s
+Units goesPrecip = mm
+Units goesBatt = Volts
+Units goesDailyRain = mm '***
+Units goesPar = mmoles/m^2 '***
+
+'''Define Data Tables:
+' The SWMP data table definition:
+DataTable (SWMP,1,-1)
+  DataInterval (0,15,min,10)
+  Average (1,AirTemp,IEEE4,False)
+  FieldNames("ATemp") 'instruction is used to output desired fieldnames in output table headers
+  Sample (1,atMax,IEEE4)
+  FieldNames("MaxTemp")
+  Sample (1,atMaxTimeSwmp,String)
+  FieldNames ("MaxTempT")
+  Sample (1,atMin,IEEE4)
+  FieldNames("MinTemp")
+  Sample (1,atMinTimeSwmp,String)
+  FieldNames("MinTempT")
+  Average (1,RHumidity,IEEE4,False)
+  FieldNames("RH")
+  Average (1,Pressure,IEEE4,False)
+  FieldNames("BP")
+  WindVector (1,WindSpd,WindDir,IEEE4,WindGood,0,0,0)'MOD**
+  FieldNames("WSpd,Wdir,SDWDir")
+  Sample (1,wsMax,IEEE4)
+  FieldNames("MaxWSpd")
+  Sample (1,wsMaxTimeSwmp,String)
+  FieldNames("MaxWSpdT")
+  Totalize (1,Precip,IEEE4,False)
+  FieldNames("TotPrcp")
+  Totalize(1,PAR,IEEE4,False)
+  FieldNames("TotPAR")
+  Average (1,Batt,IEEE4,False)
+  FieldNames("AvgVolt")
+  Sample(1,DailyRain,IEEE4) '***
+  FieldNames("CumPrcp") '***
+EndTable
+
+' The Goes Output Data Table Def
+DataTable (GOESOUT,1,-1)
+  DataInterval (0,15,min,10)
+  Average(1,GoesAT,IEEE4,False)
+  FieldNames("G_ATemp")
+  Sample(1,goesATMax,IEEE4)
+  FieldNames("G_MaxTemp")
+  Sample(1,atMaxTime,IEEE4)
+  FieldNames("G_MaxTempT")
+  Sample(1,goesATMin,IEEE4)
+  FieldNames("G_MinTemp")
+  Sample(1,atMinTime,IEEE4)
+  FieldNames("G_MinTempT")
+  Average (1,goesRH,IEEE4,False)
+  FieldNames("G_RH")
+  Average (1,goesBP,IEEE4,False)
+  FieldNames("G_BP")
+  Sample (1,goesWS,IEEE4)
+  FieldNames("G_WSpd")
+  Sample (1,goesWD,IEEE4)
+  FieldNames("G_Wdir")
+  Sample (1,goesWSD,IEEE4)
+  FieldNames("G_SDWDir")
+  Sample(1,goesWSMax,IEEE4)
+  FieldNames("G_MaxWSpd")
+  Sample(1,wsMaxTime,IEEE4)
+  FieldNames("G_MaxWSpdT")
+  Totalize (1,goesPrecip,IEEE4,False)
+  FieldNames("G_TotPrcp")
+  Totalize (1,goesPar,IEEE4,False)
+  FieldNames("G_TotPAR")
+  Average (1,goesBatt,IEEE4,False)
+  FieldNames("G_AvgVolt")
+  Sample(1,goesDailyRain,IEEE4) '***
+  FieldNames("G_CumPrcp") '***
+EndTable
+
+'''Subroutines:
+' Sub to calculate max/min and timestamps for SWMP table (goes integer values are derived from)
+Sub MaxMin
+  If AirTemp < atMin Then 	'Track Min and time of Min air temp
+    atMin = AirTemp
+    RealTime(Time())
+    atMinTime = Hour*100+Minute 'time formatted as integer for GOES table
+    atMinTimeSwmp = Hour + ":" + Minute 'time formatted as string for SWMP table
+  EndIf
+  If AirTemp > atMax Then	'Track Max and time of Max air temp
+    atMax = AirTemp
+    RealTime(Time())
+    atMaxTime = Hour*100+Minute
+    atMaxTimeSwmp = Hour + ":" + Minute
+  EndIf
+  If WindSpd > wsMax Then	'Track Max and time of max wind
+    wsMax = WindSpd
+    RealTime(Time())
+    wsMaxTime = Hour*100+Minute
+    wsMaxTimeSwmp = Hour + ":" + Minute
+  EndIf
+EndSub
+
+' Sub to setup for the GOES TX312 transmitter
+Sub setup
+  GOESSetup (goesSetResult,&H3B0211F8,10,145,300,0,100,"0_1_0_0","0_1_40","0_0_0")
+EndSub
+
+'Main Program
+BeginProg
+  'Initialize Min & Max Variables
+  atMin = 20000
+  atMax = -20000
+  wsMax = -20000
+  'initialize so goes setup subroutine will be called on first run of program
+  goesSetResult = -1
+  'Scan Rate
+  Scan (5,Sec,0,0)
+
+    '''Begin sensor settings
+    'Reference Temperature in C and Battery Voltage in Volts
+    PanelTemp (pTempC,250)
+    Battery (Batt)
+    'Convert and Store as Integer for Transmission
+    
+    'HC2S3 Air Temp and RH Probe 2 
+    'SN 61180509
+    'Temperature Brown Wire-SE1
+    'RH White Wire-SE2
+    'Power-Green Wire 12V,  could be switched to SW12V  if you uncomment the portset and delay instructions
+    'Signal Reference Yellow Wire-Ground Symbol
+    'Power Ground Grey Wire-Ground Symbol
+    'Shield Clear Wire-Ground Sym\bol
+    'Only uncomment VoltSe(Air), VoltSe(RH), & If RH to activate HC2S3
+
+'    PortSet (9,1)
+'    Delay(0,3,Sec)
+'    VoltSe(AirTemp,1,mV2500,1,0,0,_60Hz,0.1,-40.0)
+'    VoltSe(RHumidity,1,mV2500,2,0,0,_60Hz,0.1,0)
+'    If RHumidity>100 AND RHumidity<108 Then RHumidity=100
+'    PortSet (9,0)
+    
+    'HC2S3 Air Temp and RH Probe 1
+    'SN 60835193
+    'Temperature Brown Wire-SE1
+    'RH White Wire-SE2
+    'Power-Green Wire 12V,  could be switched to SW12V  if you uncomment the portset and delay instructions
+    'Signal Reference Yellow Wire-Ground Symbol
+    'Power Ground Grey Wire-Ground Symbol
+    'Shield Clear Wire-Ground Sym\bol
+    'Only uncomment VoltSe(Air), VoltSe(RH), & If RH to activate wind sensor HC2S3
+
+    'PortSet (9,1)
+    'Delay(0,3,Sec)
+    VoltSe(AirTemp,1,mV2500,1,0,0,_60Hz,0.1,-40.0)
+    VoltSe(RHumidity,1,mV2500,2,0,0,_60Hz,0.1,0)
+    If RHumidity>100 AND RHumidity<108 Then RHumidity=100
+    'PortSet (9,0)
+
+    'HMP45C (6-wire) Temperature & Relative Humidity Sensor measurements "AirTemp" in C & "RHumidity" in % 
+    'This was a 7-wire ATRH but switch to 6 at Campb Sci
+    'SN 1294801 or X3410026
+    'Wiring Yellow 1H Blue 1L White Black AG Clear G Red 12V
+    'To activate uncomment all
+    
+'    PortSet (7,1)
+'    Delay(0,150,mSec)
+'    VoltSe(AirTemp,1,mV2500,1,0,0,_60Hz,0.1,-40.0)
+'    VoltSe(RHumidity,1,mV2500,2,0,0,_60Hz,0.1,0)
+'    If RHumidity>100 AND RHumidity<108 Then RHumidity=100
+'    PortSet (7,0)
+
+    'Vaisala BTP101B Barometric Pressure Sensor measurement "Pressure" in mb on all the time...
+    'SN X1320022 
+    'Wiring Yellow or White Ground Symbol, Blue or Brown 2H, Clear Ground Symbol, Black G, Red 12v, Green 5v
+    VoltSe(Pressure,1,mV2500,3,1,0,_60Hz,0.184,600.0)
+    
+    'Vaisala BTP101B Barometric Pressure Sensor measurement "Pressure" in mb on all the time...
+    'Wiring Yellow or White Ground Symbol, Blue or Brown 2H, Clear Ground Symbol, Black G, Red 12v, Green 5v
+    'SN P4910009
+'    VoltSe(Pressure,1,mV2500,3,1,0,_60Hz,0.184,600.0)
+
+    'Campbell 5305-5 Wind Speed & Direction Sensor measurements WindSpd in ms & WindDir in Degrees 
+    'SN 83868 
+    'Wiring Green 2L, Blue EX1, Red P1, Black Clear and White Ground Symbol
+'    PulseCount(WindSpd,1,1,1,1,0.1024,0)
+'    If WindSpd = NAN Then'MOD**
+'      WindGood = true'MOD**
+'    Else'MOD**
+'      WindGood = false'MOD**
+'    EndIf'MOD**
+'    BrHalf(WindDir,1,mV2500,4,1,1,2500,True,0,_60Hz,355,0)
+'    If WindDir>=360 Then WindDir=0
+'    If WindDir<0 Then WindDir=0	' fixes the neg wind dir values
+    
+    'Campbell 5305-5 Wind Speed & Direction Sensor measurements WindSpd in ms & WindDir in Degrees 
+    'SN 75311 
+    'Wiring Green 2L, Blue EX1, Red P1, Black Clear and White Ground Symbol
+    PulseCount(WindSpd,1,1,1,1,0.1024,0)
+    If WindSpd = NAN Then'MOD**
+      WindGood = true'MOD**
+    Else'MOD**
+      WindGood = false'MOD**
+    EndIf'MOD**
+    BrHalf(WindDir,1,mV2500,4,1,1,2500,True,0,_60Hz,355,0)
+    If WindDir>=360 Then WindDir=0
+    If WindDir<0 Then WindDir=0	' fixes the neg wind dir values
+
+    ' Saved for future sensor replacement... jp 12/15/06
+    '		'Campbell 3001 Wind Speed & Direction Sensor measurements Wind_Spd in ms & Wind_Dir in Degrees
+    '		PulseCount(WindSpd,1,1,1,1,0.75,0)
+    '		if WindSpd = NAN then'MOD**
+    '			WindGood = true'MOD**
+    '		else'MOD**
+    '			WindGood = false'MOD**
+    '		endif'MOD**
+    '		ExciteV (Vx1,2500,200)
+    '		BrHalf(WindDir,1,mV2500,4,1,1,2500,True,0,_60Hz,355,0)
+    '		If WindDir>=360 Then WindDir=0
+
+    'Texas Electronics TR-525I Rain Gauge measurement Precip in mm 
+    'SN 24701-899 
+    'Wiring White and Clear Ground Symbol, Black P2
+    PulseCount(Precip,1,2,2,0,0.254,0)
+    DailyRain = DailyRain+Precip '***
+
+    'Texas Electronics TR-525I-R3 Rain Gauge measurement Precip in mm 
+    'SN 31194-902 
+    'Wiring White and Clear goes to Ground Symbol, Black P2
+'    PulseCount(Precip,1,2,2,0,0.254,0)
+'    DailyRain = DailyRain+Precip '***
+    
+'    LI190SB Quantum Sensor measurements PAR: 
+'    SN Q22179
+'    Wiring Red 3H, Black 3L, Clear Ground Symbol, Jumper 3L and Ground Symbol
+     VoltDiff(PAR,1,mV25,3,True,0,_60Hz,1.635997173,0)
+    
+    'LI190SB Quantum Sensor measurements PAR: 
+    'SN Q31076
+    'Wiring Red 3H, Black 3L, Clear Ground Symbol, Jumper 3L and Ground Symbol
+'    VoltDiff(PAR,1,mV25,3,True,0,_60Hz,1.488875125065510,0)
+
+    '''End sensor settings
+
+    'Reset station clock using GPS clock
+    If TimeIntoInterval (722,1440,min) Then	'at two minutes past noon set clock to gps clock
+      GOESGPS (gpsLoc(),gpsTime())
+      If gpsResult=0AND gHour<24AND gHour>=0AND gMinute<60AND gMinute>=0AND gSecond<60AND gSecond>=0 Then
+        gHour = gHour - GMTOFFSET 'adjust clock in GMT to local time
+        If gHour<0 Then
+          gHour=gHour+24
+        EndIf
+        ClockSet (gpsTime())
+      EndIf
+    EndIf
+
+    Call MaxMin		'track airTempMax, airTempMin, wsMax and times
+
+    CallTable SWMP
+
+    'Convert and store as integers for GOES transmission (only those not already integers)
+    goesBatt = Batt * 100
+    GoesAT = AirTemp * 100
+    goesATMax = atMax * 100
+    goesATMin = atMin * 100
+    goesRH = RHumidity * 10
+    goesBP = Pressure * 10
+    goesPrecip = Precip * 1000
+    goesPar = PAR
+    goesWSMax = wsMax * 100
+    goesDailyRain = DailyRain*1000 '***
+
+    'following must be called only after Fiftnmin table written to because
+    '   values are generated by WindVector instruction
+    goesWS = SWMP.WSpd*100
+    goesWD = SWMP.Wdir*10
+    goesWSD = SWMP.SDWDir*10
+
+    CallTable GOESOUT
+
+    'GOES Instructions
+    '		send to transmitter at time atleast 2 minutes before transmit time
+    If TimeIntoInterval (59,60,Min) Then
+      GOESData (goesFailures,GOESOUT,0,1,2)
+    EndIf
+
+    'Run setup subroutine if GOESSetResult is anything other than 0
+    If goesSetResult Then Call setup
+
+    If TimeIntoInterval(0,15,min) Then	'After Min and Max are written by MaxMin sub
+      atMin = 20000		'reset initial conditions for temp min and max and wind spd max
+      atMax = -20000
+      wsMax = -20000
+    EndIf
+
+    'reset all daily rain values to 0 every 24 hours
+    If IfTime(0,1440,min) Then DailyRain = 0 '***
+    If IfTime(0,1440,min) Then goesDailyRain = 0 '***
+
+  NextScan
+EndProg
+
